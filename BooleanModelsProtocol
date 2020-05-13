@@ -1,0 +1,468 @@
+install.packages(c("devtools","BoolNet", "BoolNetPerturb", "ggplot2", "dplyr", "magrittr", "ggrepel", "Rtsne", "mclust", "fpc"))
+install_github("mar-esther23/boolnet-perturb")
+#####################################################################################
+library(BoolNet)
+library(BoolNetPerturb)
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+library(ggrepel)
+library(Rtsne)
+library(mclust)
+library(fpc)
+####################################################################################
+#load("Boolean_macrophage_network.RData")
+
+fileConn<-file("macrofago2.txt")
+writeLines(c("targets, functions", "STAT3, ((IL10|A2a|IL10e|(IL6e & IL4e & !IFNG)|MCSF) & !(SOCS3|IFNG|IFNB|NFKB|GMCSF|IgG))", "SMAD23,((TGFBe | TGFB) & !(IFNG | SOCS3))", "STAT6, (IL4e|SMAD23|HIF1A) & !(STAT1|TNFA|TNFAe)", "SOCS1, (STAT6|IgG)", "TLR4, (TLR4 & !(IgG |GCGCR))", "NFKB, (TLR4|GMCSF|TNFA|TNFAe|IL1B) & !(IL10 | IL10e | STAT6 | STAT3 | IgG|GCGCR|HIF1A|MCSF)", "STAT1, (IFNB | IFNG|(IL6e & IFNG)) & !(STAT3 | SOCS1 | STAT6 | IgG)", "SOCS3, STAT1", "AP1,((GMCSF|TNFAe|TNFA|IL6e|IL1B) & !(GCGCR |STAT6)) ", "IL10, (IL10e | (IL4e & STAT6) | (STAT3 & IL6e) | (TLR4 & A2a)|MCSF|ERK) & !(STAT1 | NFKB | SOCS3 | IFNG | IFNB|GMCSF|IgG)", "TNFA, (TNFAe | AP1|(IL6e & AP1)|(Fra1 & AP1) & !(STAT1|NFKB|(TLR4 & A2a)))", "IL4e, IL4e", "TGFB, (TGFBe | (IL4e & STAT6) | (IL10e & STAT3) | (IL10 & STAT3) | A2a) & !(NFKB | STAT1))", "IL10e, IL10e | STAT3 | STAT6", "TNFAe, TNFAe|AP1|NFKB ", "TGFBe, TGFBe|STAT3|STAT6", "IgG, IgG", "A2a, A2a", "IFNG, IFNG|STAT1",  "IFNB, IFNB|STAT1", "IL1B, IL1B|AP1|NFKB", "Fra1, Fra1|TLR4" , "IL6e, IL6e |Fra1|AP1", "MCSF,MCSF", "GMCSF, GMCSF", "Hipoxia,Hipoxia", "HIF1A, Hipoxia|TGFB|TGFBe|(TLR4 & A2a)", "ERK, IgG", "GCGCR,GCGCR"), fileConn)
+close(fileConn)
+Macrophage.Phenotypes<-data.frame(labels=c('M0', 'M1', 'M2a','M2b','M2c', 'M2d'), rules=c('!(NFKB | STAT1 |STAT3 |STAT6|HIF1A|ERK|Fra1|AP1)', 'NFKB|STAT1|TNFA & AP1| TNFAe & AP1', 'STAT6', '  (IL1B & AP1)| ERK','STAT3', '(TLR4 & A2a) | (Fra1 & AP1) | HIF1A| Fra1'))
+
+#Once the data and the labels are in R, we call it macrophage
+macrophage<-loadNetwork("macrofago2.txt")
+#We obtain the attractors of the network. This part take a while to the method chosen
+attractors <- getAttractors(macrofago, method = "exhaustive", type="synchronous")
+listOfAttractors <- attractors_list(attractors)
+binaryStates<-get_binary_states(listOfAttractors, macrofago$genes)
+binaryStates$phenotype<-labelAttractors(attractors, labels.rules)
+
+for( i in 1:length(attractors$attractors)){
+  attrTmp<-list(stateInfo=attractors$stateInfo[i],attractors=attractors$attractors[i] )
+  print(i, labelAttractors(attrTmp, label.rules))
+}
+
+
+
+attractors_list <- function(attr=NULL){
+  attr.list<-unlist(lapply(1:length(attr$attractors), FUN= function(x) return(attr$attractors[[x]]$involvedStates)))
+  return(attr.list)
+}
+
+#Convert the binary number attractor to a boolean vector
+int2binState<-function(x,genes){
+  state<-as.integer(intToBits(x)[1:length(genes)])
+  names(state)<-genes 
+  return(state)
+}
+
+get_binary_states<-function(list_of_attractors=NULL, genes_list){
+  binarylist<-lapply(list_of_attractors, FUN=int2binState, genes=genes_list)
+  binarymatrix<-matrix(data = unlist(binarylist), ncol = length(genes_list), byrow = TRUE)
+  rm(binarylist)
+  binary.states <- as.data.frame(binarymatrix, row.names = list_of_attractors)
+  rm(binarymatrix)
+  colnames(binary.states)<-genes_list
+  return(binary.states)
+}
+#Once we have the attractors, we want to put labels based on experimental evidence
+labels <- labelAttractors(attractors, Macrophage.Phenotypes)
+table(labels)
+######################################
+#    tSNE OF THE ATTRACTORS AND      #
+#    CLUSTERING USING Kmeans         #
+######################################
+###### Clustering using Kmeans.
+rm(list = ls())
+#Check where the script is kept, redirect the path to the script
+source("C:/Users/Lenovo/Desktop/Ugo/Doctorado/Artículo/Figuras/Documentos para ingresar script en R/Funn.R")
+#Same here, put the path where the archive is being kept
+Data <- read.table(file = "C:/Users/Lenovo/Desktop/Ugo/Doctorado/Artículo/Figuras/Documentos para ingresar script en R/Atractores31MarzoTrueConFenotipos.txt",
+                   header = TRUE)
+rnames <- as.vector(Data[,1])
+Data <- Data[,-1]
+Pheno.names <- unique(rnames)
+n.Pheno <- length(Pheno.names)
+
+
+Pheno.asig <- lapply(1:n.Pheno, FUN = function(x) which(rnames==Pheno.names[x]))
+Pheno.colors <- sample(367:657,n.Pheno,replace = F)
+Col <- vector(mode = "integer", length = length(rnames))
+for (i in 1:n.Pheno){
+  Col[Pheno.asig[[i]]] <- Pheno.colors[i] 
+}
+library(Rtsne)
+set.seed(1)
+
+tSNE.Macro <- Rtsne(Data, perplexity=30,max_iter=5000,verbose=0)
+par(mar=c(5.1, 4.1, 4.1, 8.1), xpd=TRUE)
+plot(tSNE.Macro$Y, pch=21,bg=Col)
+legend("bottomleft",inset=c(1,.25), title = "Phenotypes",
+       Pheno.names,
+       pch = rep(21,n.Pheno),
+       pt.bg = Pheno.colors,
+       bty = "n",
+       pt.cex = 1,
+       cex = 1
+)
+##### kmeans utilizando consenso para determinar el número de clusters se 
+##### puede cargar el análsisi para no volverloa  correr
+
+# library(NbClust)
+# Res <- NbClust(data = tSNE.Macro$Y, distance = "euclidean",diss = NULL, 
+#                min.nc = 10, max.nc = 30, 
+#                method = "kmeans", index = "all")
+
+### Número de clusters
+n <- max(Res$Best.partition)
+
+Cluster.asig <- lapply(1:n, FUN = function(x) which(x==Res$Best.partition))
+### Asignación de color por clusters
+Cluster.colors<-c(brewer.pal(name="Set1", n=5), brewer.pal(name="Set3", n=5))
+Col <- vector(mode = "integer", length = length(rnames))
+
+for (i in 1:n){
+  Col[Cluster.asig[[i]]] <- Cluster.colors[i] 
+}
+
+par(mar=c(5.1, 4.1, 4.1, 8.1), xpd=TRUE)
+plot(tSNE.Macro$Y, pch=21,bg=Col)
+legend("bottomleft",inset=c(1,.25), title = "Clusters",
+       LETTERS[1:n],
+       pch = rep(21,n),
+       pt.bg =Cluster.colors,
+       bty = "n",
+       pt.cex = 1,
+       cex = 1
+)
+
+##### Cálculo de proporciones
+Prop <- Proportion(Res$Best.partition,
+                   n,rnames,n.Pheno,Pheno.names,tot)
+##### By Clusters
+MyplotBar(Prop[[1]],"Kmeans_Proportion_Macrophages_by_Clusters",
+          "Groups percentage","Phenotypes",Pheno.colors)
+MyplotBar(Prop[[2]],"Kmeans_Proportion_Macrophages_by_clusters",
+          "Sample percentage","Phenotypes",Pheno.colors)
+
+##### By Phenotypes
+
+MyplotBar(t(Prop[[1]]),"Kmeans_Proportion_Macrophages_by_Phenotypes",
+          "Groups percentage","Clusters",Cluster.colors)
+MyplotBar(t(Prop[[2]]),"Kmeans_Proportion_Macrophages_by_Phenotypes",
+          "Sample percentage","Clusters",Cluster.colors)
+######################################
+#    Perturbation Analysis and       #
+#    Heatmaps of said analysis       #
+######################################
+TMN_Genes <- function(model=NULL, gene=NULL, mut=c("Up", "Down", "Both"), label.rules=NULL, oFile="."){
+  oFile=sub("/$","",oFile)
+  outDataFrame<-data.frame(attractors=c(), genens=c(), Knock=c() ,phenotypes=c(),  stringsAsFactors = FALSE)
+  if(mut %in% c("Up", "Both")){
+    netUp <- fixGenes(model, gene, 1)
+    attractorsUp <- getAttractors(netUp, method = "exhaustive", type="synchronous")
+    save(attractorsUp, file=paste0(oFile,"/Up_Attractors_", gene,".RData", collapse = ""))
+    listOfAttractorsUp <- attractors_list(attractorsUp)
+    binaryStatesUp<-get_binary_states(listOfAttractorsUp, model$genes)
+    binaryStatesUp$phenotype<-labelAttractors(attractorsUp, label.rules)
+    save(binaryStatesUp, file=paste0(oFile,"/Up_Binary_States_",gene,".RData",collapse = ""))
+    dfout<-data.frame(
+      attractors=listOfAttractorsUp,
+      genes=rep(gene, length(listOfAttractorsUp)),
+      Knock=rep("Up", length(listOfAttractorsUp)),
+      phenotypes=binaryStatesUp$phenotype,
+      stringsAsFactors = FALSE
+    )
+    
+    outDataFrame<-rbind(outDataFrame,dfout)
+  }
+  
+  if(mut %in% c("Down", "Both")){
+    netDown <- fixGenes(model, gene, 0)
+    attractorsDown <- getAttractors(netDown, method = "exhaustive", type="synchronous")
+    save(attractorsDown, file=paste0(oFile,"/Down_Attractors_", gene,".RData", collapse = ""))
+    listOfAttractorsDown <- attractors_list(attractorsDown)
+    binaryStatesDown<-get_binary_states(listOfAttractorsDown, model$genes)
+    binaryStatesDown$phenotype<-labelAttractors(attractorsDown, label.rules)
+    save(binaryStatesDown, file=paste0(oFile,"/Down_Binary_States_",gene,".RData",collapse = ""))
+    dfout<-data.frame(
+      attractors=listOfAttractorsDown,
+      genes=rep(gene, length(listOfAttractorsDown)),
+      Knock=rep("Down", length(listOfAttractorsDown)),
+      phenotypes=binaryStatesDown$phenotype,
+      stringsAsFactors = FALSE
+    )
+    outDataFrame<-rbind(outDataFrame,dfout)
+  }
+  save(outDataFrame, file=paste0(oFile,"/outDataFrame_",gene,".RData",collapse = ""))
+  
+  return(outDataFrame)
+  
+}
+
+#oDF<-TMN_Genes(model=macrofago, gene="STAT3", mut=c("Up"), label.rules=labels.rules, oFile="salidas")
+
+library(parallel)
+library(doParallel)
+library(foreach)
+cl <- parallel::makeCluster(10)
+doParallel::registerDoParallel(cl)
+
+
+outputList<-list()
+system.time({
+
+  foreach(i = 1:length(macrofago$genes)) %dopar% {
+    library(BoolNet)
+    library(BoolNetPerturb)
+    outputList[i]<-TMN_Genes(model=macrofago, gene=macrofago$genes[i], mut=c("Both"), label.rules=labels.rules, oFile="salidas")
+  }
+  
+}) 
+###############################################################
+#                                                             #
+#              HeatMap of the Knock-Outs of                   #
+#                 Transcriptional Factors                     #
+###############################################################
+HeatMapKOTranscriptional<- read.csv("C:/Users/Lenovo/Desktop/Ugo/Doctorado/Artículo/HeatMapKnockOutTranscriptionalFactorsFinal.csv", comment.char="#")
+#Obtaining the phenotypes from the csv format
+Phenotypes <- HeatMapKOTranscriptional[,1] 
+#Transforming the matrix into a data fram and naming rownames with the phenotypes obtained earlier                           
+mat_HeatMapKOTranscriptional<-data.frame(HeatMapKOTranscriptional[,2:ncol(HeatMapKOTranscriptional)])
+rownames(mat_HeatMapKOTranscriptional)<- Phenotypes
+#Customizing our scale for the heatmap
+MyScale<-function(a,...){
+a.min<-min(a,...)
+a.max<-max(a,...)
+d<-a.max-a.min
+A<-(a)/(log10(d+1))
+return(A)
+}
+#Scaling the data frame
+scaleKOTransc = lapply(mat_HeatMapKOTranscriptional, MyScale, na.rm = T)
+#Transforming the list obtain earlier into a data frame
+mat_HeatMapKOTranscriptional<-data.frame(AP1=unlist(scaleKOTransc[1]),ERK=unlist(scaleKOTransc[2]), Fra1=unlist(scaleKOTransc[3]), HIF1A=unlist(scaleKOTransc[4]),NFKB=unlist(scaleKOTransc[5]), IL10=unlist(scaleKOTransc[6]), SMAD23=unlist(scaleKOTransc[7]), SOCS3=unlist(scaleKOTransc[8]), SOCS1=unlist(scaleKOTransc[9]), STAT1=unlist(scaleKOTransc[10]), STAT3=unlist(scaleKOTransc[11]),STAT6=unlist(scaleKOTransc[12]), TGFB=unlist(scaleKOTransc[13]), TNFA=unlist(scaleKOTransc[14]))
+rownames(mat_HeatMapKOTranscriptional)<- Phenotypes
+#Verifing the obtain data frame with row names and new value from the scale
+mat_HeatMapKOTranscriptional
+#Transforming the data frame into a matrix for we could draw the heatmap
+mat_HeatMapKOTranscriptional<-data.matrix(mat_HeatMapKOTranscriptional)
+#Creating a new window where we are going to plot our heatmap of the OV of Extracellular factors
+dev.new()
+HeatMapKOextracel<- heatmap.2(mat_HeatMapKOTranscriptional,
+   main = "Gene Deletion Intracellular", 
+  notecol="black",      
+  density.info="none",  
+  trace="none",         
+  margins =c(12, 7),     
+  col=redgreen(75),  
+   cexRow=0.9, cexCol=0.9,    
+  hclustfun=function(x)hclust(x,method="ward.D2")) 
+  dev.off()
+  HeatMapKOextracel
+
+###############################################################
+#                                                             #
+#              HeatMap of the Over-expression of              #
+#              Transcriptional Factors                        #
+###############################################################
+
+
+#Reading the data and tranforming it to a matrix 
+HeatMapOverTransc<- read.csv("C:/Users/Lenovo/Desktop/Ugo/Doctorado/Artículo/HeatMapofOverExpressionTranscriptionalFactorsFinal.csv", comment.char="#")
+#Obtaining the phenotypes from the csv format
+Phenotypes <- HeatMapOverTransc[,1] 
+#Transforming the matrix into a data fram and naming rownames with the phenotypes obtained earlier                           
+mat_HeatMapOverTranscriptional<-data.frame(HeatMapOverTransc[,2:ncol(HeatMapOverTransc)])
+rownames(mat_HeatMapOverTranscriptional)<- Phenotypes
+#Scaling the data frame
+scaleOverTransc = lapply(mat_HeatMapOverTranscriptional, MyScale, na.rm = T)
+#Transforming the list obtain earlier into a data frame
+mat_HeatMapOverTranscriptional<-data.frame(AP1=unlist(scaleOverTransc[1]),ERK=unlist(scaleOverTransc[2]), Fra1=unlist(scaleOverTransc[3]), HIF1A=unlist(scaleOverTransc[4]),NFKB=unlist(scaleOverTransc[5]), IL10=unlist(scaleOverTransc[6]), SMAD23=unlist(scaleOverTransc[7]), SOCS3=unlist(scaleOverTransc[8]), SOCS1=unlist(scaleOverTransc[9]), STAT1=unlist(scaleOverTransc[10]), STAT3=unlist(scaleOverTransc[11]),STAT6=unlist(scaleOverTransc[12]), TGFB=unlist(scaleOverTransc[13]), TNFA=unlist(scaleOverTransc[14]))
+rownames(mat_HeatMapOverTranscriptional)<- Phenotypes
+#Verifing the obtain data frame with row names and new value from the scale
+mat_HeatMapOverTranscriptional
+#Transforming the data frame into a matrix for we could draw the heatmap
+mat_HeatMapOverTranscriptional<-data.matrix(mat_HeatMapOverTranscriptional)
+#Creating a new window where we are going to plot our heatmap of the OV of Extracellular factors
+dev.new()
+HeatMapKOextracel<- heatmap.2(mat_HeatMapOverTranscriptional,
+   main = "Gene Activation Intracellular", 
+  notecol="black",      
+  density.info="none",  
+  trace="none",         
+  margins =c(12, 7), 
+  cexRow=0.9, cexCol=0.9 ,    
+  col=redgreen(75),       
+  hclustfun=function(x)hclust(x,method="ward.D2"))
+###########################################################  
+#   Microenvironment Analysis of macrophage adaptation    # 
+#               to specific scenarios                     #                                
+###########################################################
+PROM1<-fixGenes(macrofago, c('IFNG','IFNB'), c(1,1))
+PROM1.attr<-getAttractors(PROM1, method = "exhaustive", type="synchronous")
+PROM1.attr.labels<-labelAttractors(PROM1.attr, labels.rules)
+table(PROM1.attr.labels)
+#############################################################################################
+PROM2a<-fixGenes(macrofago, c('IL4e','TGFBe'), c(1,1))
+PROM2a.attr<-getAttractors(PROM2a, method = "exhaustive", type="synchronous")
+PROM2a.attr.labels<-labelAttractors(PROM2a.attr, labels.rules)
+table(PROM2a.attr.labels)
+############################################################################################
+PROM2b<-fixGenes(macrofago, c('IgG','GCGCR'), c(1,1))
+PROM2b.attr<-getAttractors(PROM2b, method = "exhaustive", type="synchronous")
+PROM2b.attr.labels<-labelAttractors(PROM2b.attr, labels.rules)
+table(PROM2b.attr.labels)
+###########################################################################################
+PROM2c<-fixGenes(macrofago, c('IL10e','IL6e', 'MCSF' ), c(1,1,1))
+PROM2c.attr<-getAttractors(PROM2c, method = "exhaustive", type="synchronous")
+PROM2c.attr.labels<-labelAttractors(PROM2c.attr, labels.rules)
+table(PROM2c.attr.labels)
+##########################################################################################
+PROM2d<-fixGenes(macrofago, c('A2a','Hipoxia','GCGCR' ), c(1,1,1))
+PROM2d.attr<-getAttractors(PROM2d, method = "exhaustive", type="synchronous")
+PROM2d.attr.labels<-labelAttractors(PROM2d.attr, labels.rules)
+table(PROM2d.attr.labels)
+#########################################################################################
+PROM0<-fixGenes(macrofago, c('TLR4','IL4e', 'IL10e', 'TNFAe', 'TGFBe', 'IgG', 'A2a', 'IFNG','IFNB', 'IL1B', 'Hipoxia', 'GMCSF', 'IL6e', 'MCSF', 'GCGCR'), c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+PROM0.attr<-getAttractors(PROM0, method = "exhaustive", type="synchronous")
+PROM0.attr.labels<-labelAttractors(PROM20.attr, labels.rules)
+table(PROM0.attr.labels)
+##########################################################################################
+#Heatmap comparando el basin del microambiente con el WT
+#Reading the data and tranforming it to a matrix  (Fig4)
+library(gplots)
+library(RColorBrewer)
+HeatMapMircoE<- read.csv("C:/Users/Lenovo/Desktop/Ugo/Doctorado/Artículo/Figuras/Documentos para ingresar script en R/Microambientes2Final.csv", comment.char="#")
+Phenotypes <- HeatMapMircoE[,1]                            
+mat_HeatMapMircoE <- data.matrix(HeatMapMircoE[,2:ncol(HeatMapMircoE)])  
+rownames(mat_HeatMapMircoE)<- Phenotypes
+ #We create a png image
+library("extrafont")
+loadfonts()
+pdf("Fig4.pdf",family="Arial", width=6.83, height=6) 
+HeatMapMicroE<- heatmap.2(mat_HeatMapMircoE,
+   main = "Microenvironments", 
+  notecol="black",      
+  density.info="none",  
+  trace="none",         
+  margins =c(12, 7),     
+  col=redgreen(75),   
+   cexRow=.95, cexCol=.95,    
+  hclustfun=function(x)hclust(x,method="ward.D2")) 
+ dev.off()
+
+##########################################
+#         Cell Fate Map of               #
+#         Macrophage Polarization        #
+##########################################
+##We took the cell fate map function from BoolNetPerturb and ajusted it to our analysis of macrophage polarization. The only modification we
+## did was on the method obtaining the attractors
+CellFateMap <- function(net,states,genes,time=1, label.rules, ...) {    
+    # validate and select random if default
+    if (!is(net, "BooleanNetwork")) { stop("Error: non-valid network") }
+    if (missing(states)) { #run for all attractors
+        states <- getAttractors(net, method="exhaustive")
+        states <- attractorToDataframe(states, Boolean=T)
+        states["attractor"] <-NULL
+        states["state"] <- NULL
+    }
+    if (missing(genes)) {genes = net$genes}
+    res <- apply(states, 1, function(s) {
+        r <- sapply(genes, function(g) {
+            perturbState(net,s,g,time,all.data=T,int=T) 
+        })
+        t(data.frame(r))
+    })
+    res <- do.call("rbind", res)
+    row.names(res) <- NULL
+    res <- data.frame(res, row.names=NULL)
+    
+    if (!missing(label.rules)) { #label
+        res["initial"] <- suppressWarnings( 
+            labelList(res["initial"], label.rules,net$genes) )
+        res["final"] <- suppressWarnings( 
+            labelList(res["final"], label.rules,net$genes) )
+    }       
+    
+    return(res)
+}  
+#This part will take a while to finish
+CellFateMapMacrophagesPlasticity<-CellFateMap(macrophage, label.rules = Macrophage.Phenotypes, time=NULL) 
+#################################################################
+#                                                               #
+# Theoretical pharmeceutical approach                           #
+#################################################################
+NfkbNoHif1a<-fixGenes(macrofago, c('NFKB', 'HIF1A'), c(1,0))
+NfkbNoHif1a.attr<-getAttractors(NfkbNoHif1a, method = "exhaustive", type="synchronous")
+NfkbNoHif1a.labels<-labelAttractors(NfkbNoHif1a.attr,labels.rules)
+table(NfkbNoHif1a.labels)
+#################################################################
+#                                                               #
+# Theoretial approach in breast cancer microenvironment         #
+#################################################################
+#First let´s test this approach by applying a possible breast cancer microenvironment
+# We are going to fixed th behaviour of IFNg and INFb as cero for all the simulations 
+IL10TGFB<-fixGenes(NfkbNoHif1a, c('IFNG', 'IFNB', 'IL10e', 'TGFBe'), c(0,0,1,1))
+IL10TGFB.attr<-getAttractors(IL10TGFB, method = "exhaustive", type="synchronous")
+IL10TGFB.labels<-labelAttractors(IL10TGFB.attr,labels.rules)
+table(IL10TGFB.labels)
+######################################################################################
+# Now let´s see the importance of IgG and adenosines in the behaviour of our model
+IgGA2a<-fixGenes(NfkbNoHif1a, c('IFNG', 'IFNB', 'IgG', 'A2a'), c(0,0,1,1))
+IgGA2a.attr<-getAttractors(IgGA2a, method = "exhaustive", type="synchronous")
+IgGA2a.labels<-labelAttractors(IgGA2a.attr,labels.rules)
+table(IgGA2a.labels)
+#######################################################################################
+HipGCGCR<-fixGenes(NfkbNoHif1a, c('IFNG', 'IFNB', 'Hipoxia', 'GCGCR'), c(0,0,1,1))
+HipGCGCR.attr<-getAttractors(HipGCGCR, method = "exhaustive", type="synchronous")
+HipGCGCR.labels<-labelAttractors(HipGCGCR.attr,labels.rules)
+table(HipGCGCR.labels)
+#######################################################################################
+IL1BIL6<-fixGenes(NfkbNoHif1a, c('IFNG', 'IFNB', 'IL1B', 'IL6e'), c(0,0,1,1))
+IL1BIL6.attr<-getAttractors(IL1BIL6, method = "exhaustive", type="synchronous")
+IL1BIL6.labels<-labelAttractors(IL1BIL6.attr,labels.rules)
+table(IL1BIL6.labels)
+#######################################################################################
+MCSFGMCSF<-fixGenes(NfkbNoHif1a, c('IFNG', 'IFNB', 'MCSF', 'GMCSF'), c(0,0,1,1))
+MCSFGMCSF.attr<-getAttractors(MCSFGMCSF, method = "exhaustive", type="synchronous")
+MCSFGMCSF.labels<-labelAttractors(MCSFGMCSF.attr,labels.rules)
+table(MCSFGMCSF.labels)
+#############################################################################################################
+ALLMicro<-fixGenes(NfkbNoHif1a, c( "IL10e", "TNFAe", "TGFBe", "IgG", "A2a", "IL1B", "Hipoxia", "GMCSF", "IL6e", "MCSF", "GCGCR"), c(1,1,1,1,1,1,1,1,1,1,1))
+ALLMicro.attr<-getAttractors(ALLMicro, method = "exhaustive", type="synchronous")
+ALLMicro.labels<-labelAttractors(ALLMicro.attr,labels.rules)
+table(ALLMicro.labels)
+############################################################################################################################
+#                                                                                                                          #
+#                                                                         HeatMaps   fig7()                                #
+############################################################################################################################
+#Now let´s make the heatmap of the results of the microenvironment
+library(gplots)
+library(RColorBrewer)
+HeatMapBreastCancerMicro<- read.csv("C:/Users/Lenovo/Desktop/Ugo/Doctorado/Artículo/Figuras/Documentos para ingresar script en R/BreastCancerMicroenvironments.csv", comment.char="#")
+Phenotypes <- HeatMapBreastCancerMicro[,1]                            
+mat_HeatMapBreastCancerMicro <- data.matrix(HeatMapBreastCancerMicro[,2:ncol(HeatMapBreastCancerMicro)])  
+rownames(mat_HeatMapBreastCancerMicro)<- Phenotypes
+#Customizing and plotting the heat map 
+# creates a own color palette from red to green
+MyScale<-function(a,...){
+a.min<-min(a,...)
+a.max<-max(a,...)
+d<-a.max-a.min
+A<-(a)/(log10(d))
+return(A)
+}
+scaleHeatMapBreastCancerMicro<-MyScale(mat_HeatMapBreastCancerMicro)
+library("extrafont")
+loadfonts()
+pdf("Fig7A.pdf",family="Arial", width=6.83, height=6)
+HeatMapBreastCancer<- heatmap.2(scaleHeatMapBreastCancerMicro,
+   main = " Breast Cancer Microenvironments", 
+  notecol="black",      
+  density.info="none",  
+  trace="none",         
+  margins =c(11, 6),     
+  col=redgreen(75),  
+  cexRow=1.1, cexCol=1.1,     
+  hclustfun=function(x)hclust(x,method="ward.D2")) 
+dev.off()
+
+
+#################################################################
+#                                                               #
+#   Cell Fate Map Breast Cancer Microenvironment                #
+#################################################################                                                               
+CellFateNfkbNoHif1a <- CellFateMap(NfkbNoHif1a, genes=c('TLR4','IL4e', 'IL10e', 'TNFAe', 'TGFBe', 'IgG', 'A2a', 'IFNG','IFNB', 'IL1B', 'Hipoxia', 'GMCSF', 'IL6e', 'MCSF', 'GCGCR'), values=c(1,0,1,1,1,1,1,0,0,1,1,0,1,1,1),  label.rules = labels.rules, time=NULL)
+
+dataframe<-data.frame(initial=unlist(CellFateNfkbNoHif1a[1]), final=unlist(CellFateNfkbNoHif1a[2]), gene=unlist(CellFateNfkbNoHif1a[3]), values=unlist(CellFateNfkbNoHif1a[4]))
+ write.table(dataframe, "CellFateNfkbNoHif1a3.csv")
